@@ -1,0 +1,13 @@
+title: "Shubham S. Deshmukh"
+description: "ML Engineer | Researcher | Open Source"
+url: "https://shubham619.github.io"
+theme: "minimal-mistakes-jekyll"
+
+author:
+  name: "Shubham S. Deshmukh"
+  avatar: "/assets/images/bio-photo.jpg"
+  bio: "Short bio here."
+  location: "Your City, Country"
+  email: "your@email.com"
+  github: "yourusername"
+  linkedin: "your-linkedin"
