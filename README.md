@@ -1,45 +1,42 @@
-def forward(
-    self,
-    hidden_states,           # Tensor passed from HF model
-    attention_mask=None,     # Safe default
-    position_ids=None,
-    past_key_value=None,
-    output_attentions=False,
-    use_cache=True,
-    **kwargs                 # Future-proof: avoids crashing on extra HF args
-):
-    b, s, _ = hidden_states.shape
-    q = self.q(hidden_states).view(b, s, self.h, self.d).transpose(1, 2)
-    k_new = self.k(hidden_states).view(b, s, self.h, self.d).transpose(1, 2)
-    v_new = self.v(hidden_states).view(b, s, self.h, self.d).transpose(1, 2)
+import os
+import psutil
+import threading
+import torch
+from transformers import AutoTokenizer, AutoModelForCausalLM
 
-    if use_cache:
-        self.cache.prefetch(self.layer, hidden_states.device)
+def run_generate_batch(model_name, prompts, cpu_range):
+    # Bind current process/thread to specific CPU range
+    p = psutil.Process(os.getpid())
+    p.cpu_affinity(cpu_range)
+    torch.set_num_threads(len(cpu_range))
 
-        # Only fetch if exists
-        if self.layer in self.cache.store:
-            k_hist, v_hist = self.cache.fetch(self.layer, hidden_states.device)
-            k_cat = torch.cat([k_hist, k_new], dim=2)
-            v_cat = torch.cat([v_hist, v_new], dim=2)
-        else:
-            k_cat, v_cat = k_new, v_new
+    # Load model and tokenizer
+    tokenizer = AutoTokenizer.from_pretrained(model_name)
+    model = AutoModelForCausalLM.from_pretrained(model_name).eval()
 
-        self.cache.save(self.layer, k_cat, v_cat)
-    else:
-        k_cat, v_cat = k_new, v_new
+    # Tokenize batch
+    inputs = tokenizer(prompts, return_tensors="pt", padding=True, truncation=True)
+    input_ids = inputs.input_ids
 
-    scores = torch.matmul(q, k_cat.transpose(-1, -2)) / (self.d ** 0.5)
-    probs = torch.softmax(scores, dim=-1)
-    y = torch.matmul(probs, v_cat)
+    # Run batch generate
+    outputs = model.generate(input_ids, max_new_tokens=20)
 
-    y = y.transpose(1, 2).contiguous().view(b, s, self.h * self.d)
-    output = self.o(y)
+    # Decode and print each
+    print(f"\n[CPU {cpu_range[0]}-{cpu_range[-1]}] Outputs:")
+    for i, output in enumerate(outputs):
+        decoded = tokenizer.decode(output, skip_special_tokens=True)
+        print(f"  Prompt {i+1}: {decoded}")
 
-    # Standards-compliant output
-    outputs = (output,)
-    if use_cache:
-        # HF expects `present_key_value` for future use even if unused
-        outputs += ((k_cat, v_cat),)
-    if output_attentions:
-        outputs += (probs,)
-    return outputs
+# Inputs
+batch_1 = ["Hello, how are you?", "Tell me a joke.", "What's the weather today?"]
+batch_2 = ["Once upon a time", "Explain relativity.", "What is quantum physics?"]
+
+# Two threads, two CPU ranges
+thread1 = threading.Thread(target=run_generate_batch, args=("gpt2", batch_1, list(range(0, 46))))
+thread2 = threading.Thread(target=run_generate_batch, args=("gpt2", batch_2, list(range(46, 92))))
+
+# Start and wait
+thread1.start()
+thread2.start()
+thread1.join()
+thread2.join()
